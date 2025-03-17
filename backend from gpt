@@ -1,0 +1,140 @@
+
+const express = require("express");
+const multer = require("multer");
+const { PDFDocument } = require("pdf-lib");
+const XLSX = require("xlsx");
+const fs = require("fs");
+const path = require("path");
+
+// Initialize Express app
+const app = express();
+const port = 5000;
+
+// Set up multer for file upload
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, "uploads/"); // Save files in 'uploads' folder
+  },
+  filename: (req, file, cb) => {
+    cb(null, Date.now() + path.extname(file.originalname)); // Rename file to avoid collision
+  },
+});
+
+const upload = multer({
+  storage: storage,
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype !== "application/pdf") {
+      return cb(new Error("Only PDF files are allowed"), false);
+    }
+    cb(null, true);
+  },
+});
+
+// Endpoint to handle PDF upload and extraction
+app.post("/upload-pdf", upload.single("pdf"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).send("No file uploaded.");
+  }
+
+  try {
+    // Read the uploaded PDF file
+    const filePath = path.join(__dirname, "uploads", req.file.filename);
+    const pdfBuffer = fs.readFileSync(filePath);
+    const pdfDoc = await PDFDocument.load(pdfBuffer);
+
+    const pages = pdfDoc.getPages();
+    const extractedData = [];
+
+    pages.forEach((page) => {
+      const text = page.getTextContent();
+      let orderId = "",
+        orderDate = "",
+        deliverTo = "",
+        phone = "",
+        deliveryAddress = "",
+        total = 0;
+
+      text.items.forEach((line, idx) => {
+        const lineText = line.str;
+
+        // Parse Order ID
+        if (lineText.includes("Order ID")) {
+          const match = lineText.match(/Order ID\s*(\d+)/);
+          if (match) orderId = match[1];
+        }
+
+        // Parse Order Date
+        if (lineText.includes("Order Date")) {
+          const match = lineText.match(/Order Date:\s*(.*)/);
+          if (match) orderDate = match[1].trim();
+        }
+
+        // Parse Deliver To & Phone
+        if (lineText.includes("Deliver To:")) {
+          const match = lineText.match(/Deliver To:\s*(.*) Phone:\s*(\d+)/);
+          if (match) {
+            deliverTo = match[1].trim();
+            phone = match[2];
+          }
+        }
+
+        // Parse Delivery Address
+        if (lineText.includes("Delivery Address:")) {
+          const match = lineText.match(/Delivery Address:\s*(.*)/);
+          if (match) deliveryAddress = match[1].trim();
+        }
+
+        // Parse Total
+        if (lineText.includes("Total:")) {
+          const match = lineText.match(/Total:\s*([\d,]+\.\d+|\d+)/);
+          if (match) total = parseFloat(match[1].replace(",", ""));
+        }
+      });
+
+      if (orderId) {
+        extractedData.push({
+          "Order ID": orderId,
+          "Order Date": orderDate,
+          "Deliver To": deliverTo,
+          Phone: phone,
+          "Delivery Address": deliveryAddress,
+          Total: total,
+        });
+      }
+    });
+
+    // Generate Excel file from the extracted data
+    const ws = XLSX.utils.json_to_sheet(extractedData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Orders");
+    const excelFile = XLSX.write(wb, { bookType: "xlsx", type: "binary" });
+
+    // Create a downloadable Excel file
+    const excelFilePath = path.join(
+      __dirname,
+      "uploads",
+      "Extracted_Order_Details.xlsx"
+    );
+    fs.writeFileSync(excelFilePath, Buffer.from(new Uint8Array(excelFile)));
+
+    // Send the Excel file as a response
+    res.download(excelFilePath, "Extracted_Order_Details.xlsx", (err) => {
+      if (err) {
+        console.error("Error during download:", err);
+        res.status(500).send("Failed to download the file.");
+      }
+      // Clean up the uploaded PDF and Excel file after sending
+      fs.unlinkSync(filePath);
+      fs.unlinkSync(excelFilePath);
+    });
+  } catch (error) {
+    console.error("Error extracting PDF data:", error);
+    res.status(500).send("Error extracting PDF data.");
+  }
+});
+
+// Start the Express server
+app.listen(port, () => {
+  console.log(`Server is running on http://localhost:${port}`);
+});
+
