@@ -1,0 +1,144 @@
+# =========================================
+# STEP 1: Install Required Packages
+# =========================================
+!pip install PyPDF2 pandas openpyxl
+
+# =========================================
+# STEP 2: Upload PDF
+# =========================================
+from google.colab import files
+uploaded = files.upload()
+
+# =========================================
+# STEP 3: Import Libraries
+# =========================================
+import re
+import pandas as pd
+from PyPDF2 import PdfReader
+
+# Extract the uploaded PDF filename
+pdf_path = list(uploaded.keys())[0]
+
+# =========================================
+# STEP 4: Extract Data Page by Page
+# =========================================
+reader = PdfReader(pdf_path)
+data = []
+
+for page in reader.pages:
+    text = page.extract_text()
+    lines = text.split('\n')
+
+    order_id = ""
+    order_date = ""
+    deliver_to = ""
+    phone = ""
+    delivery_address = ""
+    total = 0.0
+
+    for idx, line in enumerate(lines):
+        # ---- Parse Order ID ----
+        if "Order ID" in line:
+            match_id = re.search(r"Order ID\s*(\d+)", line)
+            if match_id:
+                order_id = match_id.group(1)
+            else:
+                # If not found on the same line, try next line
+                if idx + 1 < len(lines):
+                    next_line_match = re.search(r"(\d+)", lines[idx + 1])
+                    if next_line_match:
+                        order_id = next_line_match.group(1)
+
+        # ---- Parse Order Date ----
+        if "Order Date" in line:
+            match_date = re.search(r"Order Date:\s*(.*)", line)
+            if match_date:
+                order_date = match_date.group(1).strip()
+            else:
+                # If not on the same line, try the next
+                if idx + 1 < len(lines):
+                    order_date = lines[idx + 1].strip()
+
+        # ---- Parse Deliver To & Phone ----
+        if "Deliver To:" in line:
+            # Example line: "Deliver To: Jane Doe Phone: 880123456789"
+            dt_match = re.search(r"Deliver To:\s*(.*)", line)
+            if dt_match:
+                dt_str = dt_match.group(1).strip()
+                # Try capturing phone from dt_str
+                phone_match = re.search(r"(?i)phone:\s*(\d+)", dt_str)
+                if phone_match:
+                    phone = phone_match.group(1)
+                    # Remove the phone portion from dt_str if you only want the name in "Deliver To"
+                    dt_str = re.sub(r"(?i)phone:\s*\d+", "", dt_str).strip()
+                deliver_to = dt_str
+
+        # ---- Parse Delivery Address ----
+        if "Delivery Address:" in line:
+            addr_lines = []
+            # Check on same line
+            da_match = re.search(r"Delivery Address:\s*(.*)", line)
+            if da_match:
+                possible_addr = da_match.group(1).strip()
+                if possible_addr and not re.search(r'Bill To|Billing Address', possible_addr, re.IGNORECASE):
+                    addr_lines.append(possible_addr)
+
+            # Then grab subsequent lines until "Bill To" or "Billing Address"
+            for j in range(1, 10):
+                if idx + j < len(lines):
+                    next_line = lines[idx + j].strip()
+                    if "Bill To" in next_line or "Billing Address" in next_line:
+                        break
+                    addr_lines.append(next_line)
+                else:
+                    break
+
+            delivery_address = ', '.join(addr_lines)
+
+        # ---- Parse Total ----
+        if "Total:" in line:
+            total_match = re.search(r'Total:\s*([\d,]+\.\d+|\d+)', line)
+            if total_match:
+                total = float(total_match.group(1).replace(',', ''))
+
+    # ---- Append row if an Order ID was found ----
+    if order_id:
+        data.append({
+            "Order ID": order_id,
+            "Order Date": order_date,
+            "Deliver To": deliver_to,
+            "Phone": phone,
+            "Delivery Address": delivery_address,
+            "Total": total
+        })
+
+# =========================================
+# STEP 5: Create DataFrame & Summary
+# =========================================
+df = pd.DataFrame(data)
+
+if not df.empty:
+    total_sum = df["Total"].sum()
+    total_orders = len(df)
+    summary_row = {
+        "Order ID": "TOTAL SUMMARY",
+        "Order Date": "",
+        "Deliver To": "",
+        "Phone": "",
+        "Delivery Address": "",
+        "Total": total_sum
+    }
+    # Insert a note about total orders if you like:
+    # summary_row["Deliver To"] = f"Total Orders: {total_orders}"
+    df = pd.concat([df, pd.DataFrame([summary_row])], ignore_index=True)
+
+# =========================================
+# STEP 6: Save to Excel & Download
+# =========================================
+output_excel = "Extracted_Order_Details.xlsx"
+df.to_excel(output_excel, index=False)
+
+from google.colab import files
+files.download(output_excel)
+
+print("Extraction complete! Check the DataFrame and downloaded Excel file for results.")
