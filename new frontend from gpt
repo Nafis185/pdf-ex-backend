@@ -1,0 +1,154 @@
+
+
+"use client";
+
+import React, { useState } from "react";
+import { PDFDocument } from "pdf-lib";
+import * as XLSX from "xlsx";
+
+const PdfToExcel = () => {
+  const [data, setData] = useState([]);
+  const [file, setFile] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleFileUpload = (e) => {
+    const uploadedFile = e.target.files[0];
+    setFile(uploadedFile);
+  };
+
+  const extractPdfData = async () => {
+    if (!file) {
+      alert("Please upload a PDF file first.");
+      return;
+    }
+
+    setLoading(true); // Start loading
+
+    const fileReader = new FileReader();
+    fileReader.onload = async () => {
+      const arrayBuffer = fileReader.result;
+      const pdfDoc = await PDFDocument.load(arrayBuffer);
+      const pages = pdfDoc.getPages();
+      const extractedData = [];
+
+      pages.forEach((page) => {
+        const text = page.getTextContent();
+        let orderId = "",
+          orderDate = "",
+          deliverTo = "",
+          phone = "",
+          deliveryAddress = "",
+          total = 0;
+
+        text.items.forEach((line, idx) => {
+          const lineText = line.str;
+
+          // Parse Order ID
+          if (lineText.includes("Order ID")) {
+            const match = lineText.match(/Order ID\s*(\d+)/);
+            if (match) orderId = match[1];
+          }
+
+          // Parse Order Date
+          if (lineText.includes("Order Date")) {
+            const match = lineText.match(/Order Date:\s*(.*)/);
+            if (match) orderDate = match[1].trim();
+          }
+
+          // Parse Deliver To & Phone
+          if (lineText.includes("Deliver To:")) {
+            const match = lineText.match(/Deliver To:\s*(.*) Phone:\s*(\d+)/);
+            if (match) {
+              deliverTo = match[1].trim();
+              phone = match[2];
+            }
+          }
+
+          // Parse Delivery Address
+          if (lineText.includes("Delivery Address:")) {
+            const match = lineText.match(/Delivery Address:\s*(.*)/);
+            if (match) deliveryAddress = match[1].trim();
+          }
+
+          // Parse Total
+          if (lineText.includes("Total:")) {
+            const match = lineText.match(/Total:\s*([\d,]+\.\d+|\d+)/);
+            if (match) total = parseFloat(match[1].replace(",", ""));
+          }
+        });
+
+        if (orderId) {
+          extractedData.push({
+            "Order ID": orderId,
+            "Order Date": orderDate,
+            "Deliver To": deliverTo,
+            Phone: phone,
+            "Delivery Address": deliveryAddress,
+            Total: total,
+          });
+        }
+      });
+
+      setData(extractedData);
+      generateExcel(extractedData);
+      setLoading(false); // Stop loading
+    };
+
+    fileReader.readAsArrayBuffer(file);
+  };
+
+  const generateExcel = (extractedData) => {
+    const ws = XLSX.utils.json_to_sheet(extractedData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Orders");
+    const excelFile = XLSX.write(wb, { bookType: "xlsx", type: "binary" });
+
+    // Create a downloadable Excel file
+    const blob = new Blob([new Uint8Array(excelFile)], {
+      type: "application/octet-stream",
+    });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "Extracted_Order_Details.xlsx";
+    link.click();
+  };
+
+  return (
+    <div>
+      <h1>Extract PDF Order Data to Excel</h1>
+      <input type="file" accept=".pdf" onChange={handleFileUpload} />
+      <button onClick={extractPdfData} disabled={loading}>
+        {loading ? "Processing..." : "Extract and Download Excel"}
+      </button>
+      {loading && <p>Loading...</p>}
+      {data.length > 0 && (
+        <table>
+          <thead>
+            <tr>
+              <th>Order ID</th>
+              <th>Order Date</th>
+              <th>Deliver To</th>
+              <th>Phone</th>
+              <th>Delivery Address</th>
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((row, idx) => (
+              <tr key={idx}>
+                <td>{row["Order ID"]}</td>
+                <td>{row["Order Date"]}</td>
+                <td>{row["Deliver To"]}</td>
+                <td>{row["Phone"]}</td>
+                <td>{row["Delivery Address"]}</td>
+                <td>{row["Total"]}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+};
+
+export default PdfToExcel;
