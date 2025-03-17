@@ -1,0 +1,66 @@
+"use client";
+import { useState } from "react";
+
+export default function Home() {
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleFileChange = (e) => {
+    const selectedFile = e.target.files[0];
+    if (selectedFile) {
+      setFile(selectedFile);
+      setPreview(URL.createObjectURL(selectedFile));
+    }
+  };
+
+  const handleUpload = async () => {
+    if (!file) return alert("Please upload a PDF first.");
+    setLoading(true);
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const response = await fetch("http://localhost:5000/upload", {
+      // const response = await fetch("http://127.0.0.1:5000/upload", {
+        method: "POST",
+        body: formData,
+        headers: {
+          Accept: "application/json",
+        },
+      });
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "InvoiceData.xlsx";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (error) {
+      console.error("Upload failed", error);
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="flex flex-col items-center p-6 bg-gray-100 min-h-screen">
+      <h1 className="text-2xl font-bold mb-4">PDF to Excel Converter</h1>
+      <input
+        type="file"
+        accept="application/pdf"
+        onChange={handleFileChange}
+        className="mb-4"
+      />
+      {preview && <iframe src={preview} className="w-full h-64 mb-4 border" />}
+      <button
+        onClick={handleUpload}
+        className="bg-blue-500 text-white px-4 py-2 rounded"
+        disabled={loading}
+      >
+        {loading ? "Processing..." : "Extract & Download"}
+      </button>
+    </div>
+  );
+}
+
